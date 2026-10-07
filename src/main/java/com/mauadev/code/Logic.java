@@ -165,7 +165,7 @@ public class Logic {
     public static Map<String, String> info() {
         Map<String, String> info = new HashMap<>();
         info.put("apiversion", "1");
-        info.put("author", "");          // TODO: coloque aqui o SEU usuário do Battlesnake
+        info.put("author", "ph-ARCH");          // TODO: coloque aqui o SEU usuário do Battlesnake
         info.put("color", "#8b0051");    // TODO: escolha a cor da sua cobra
         info.put("head", "Snowman");  // TODO: escolha a cabeça
         info.put("tail", "Mouse");        // TODO: escolha a cauda
