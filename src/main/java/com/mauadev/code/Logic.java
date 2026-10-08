@@ -37,9 +37,9 @@ package com.mauadev.code;
 //     o cálculo é em PONTOS DE VIDA (cada casa de hazard custa 1 + dano), não em passos.
 //   - SEGUIR A CAUDA: com o corpo grande, o caminho mais seguro costuma ser seguir a própria
 //     cauda: ela sempre abre espaço.
-//   - TEMPO: a jogada inteira termina em até 100 ms (MOVE_MAX_MS). A busca aprofunda de 1 em 1
-//     (iterative deepening) e para quando o prazo acaba (SEARCH_CAP_MS), então sempre há resposta.
-//     O prazo encolhe sozinho se a latência medida estiver alta.
+//   - TEMPO: no 1v1 a jogada leva ~100 ms em média e no máximo ~125 ms (MOVE_MAX_MS), bem abaixo
+//     dos 500 ms do jogo. A busca aprofunda de 1 em 1 (iterative deepening) e para quando o prazo
+//     acaba (SEARCH_CAP_MS), então sempre há resposta.
 //
 //  TÉCNICAS (resumo)
 //   - Minimax com poda alfa-beta, aprofundamento iterativo e ordenação pelas notas clássicas.
@@ -47,7 +47,8 @@ package com.mauadev.code;
 //     primeiro. Não muda a resposta, mas a poda corta muito mais cedo (quase metade dos nós).
 //   - Avaliação com BITBOARDS: o território (Voronoi) é calculado com operações de bits, várias
 //     casas por instrução. Resultado idêntico ao cálculo casa por casa, ~5x mais rápido.
-//   - Fim de jogo: vitória = +100000 - turno (quanto antes melhor); empate = 0; derrota = -(...).
+//   - Fim de jogo: vitória = +100000 - turno (quanto antes melhor); empate = -50000 (só é melhor que perder);
+//     derrota = -(100000 - turno).
 //   - Tudo que mexe em comportamento está em Weights / constantes TUNING / Search.W_* (no fim do arquivo).
 //
 //  Documentação do jogo: https://docs.battlesnake.com
@@ -138,18 +139,18 @@ public class Logic {
     static final int OPENING_TURNS = 12;            // turnos considerados "abertura"
     static final double TIME_BUDGET = 0.4;          // fração do timeout que podemos gastar calculando
     static final double SEARCH_TIME = 0.30;         // fração do timeout usada pela busca 1v1
-    static final double SEARCH_CAP_MS = 65.0;       // teto da busca 1v1 (ms)
+    static final double SEARCH_CAP_MS = 109.0;      // teto da busca 1v1 (ms): dá ~100 ms de média por jogada
     // TEMPO MÁXIMO DA JOGADA: tudo (ler o estado, buscar, desempatar) termina antes disso.
-    static final double MOVE_MAX_MS = 100.0;
-    static final double TIEBREAK_UNTIL_MS = 78.0;   // depois disso o desempate usa a nota rápida
-    static final double CLASSIC_UNTIL_MS = 85.0;    // 3+ cobras: depois disso só a nota rápida
+    static final double MOVE_MAX_MS = 125.0;
+    static final double TIEBREAK_UNTIL_MS = 120.0;   // depois disso o desempate usa a nota rápida
+    static final double CLASSIC_UNTIL_MS = 125.0;    // 3+ cobras: depois disso só a nota rápida
 
     /** Orçamento fixo da busca em ms (testes). Negativo = automático (ver searchBudgetMs). */
     static double searchMsOverride = Double.parseDouble(System.getProperty("battlesnake.searchMs", "-1"));
     /** Escreve uma linha por jogada na saída padrão (CloudWatch na Lambda). */
     static boolean log = false;
     /** Duração do aquecimento feito em start(). Curto de propósito: o /start também tem prazo. */
-    static final long WARMUP_MS = 100;
+    static final long WARMUP_MS = 60;
 
     /** Só roda o aquecimento uma vez por instância da Lambda. */
     private static boolean aquecida = false;
@@ -165,11 +166,11 @@ public class Logic {
     public static Map<String, String> info() {
         Map<String, String> info = new HashMap<>();
         info.put("apiversion", "1");
-        info.put("author", "");          // TODO: coloque aqui o SEU usuário do Battlesnake
-        info.put("color", "#8b0051");    // TODO: escolha a cor da sua cobra
-        info.put("head", "Snowman");  // TODO: escolha a cabeça
-        info.put("tail", "Mouse");        // TODO: escolha a cauda
-        info.put("version", "6.0.0-java");
+        info.put("author", "ph-arch");
+        info.put("color", "#00E5FF");    // ciano neon
+        info.put("head", "fang");        // cabeça grátis (Standard)
+        info.put("tail", "sharp");       // cauda grátis (Standard)
+        info.put("version", "6.2.0-java");
         return info;
     }
 
@@ -810,7 +811,7 @@ public class Logic {
     // BUSCA (resumo; o algoritmo está na classe Search, no fim deste arquivo)
     // --------------------------------------------------------------------------- //
 
-    /** Tempo de busca: 30% do timeout, no máximo SEARCH_CAP_MS (a jogada toda fica abaixo de 100 ms). */
+    /** Tempo de busca: 30% do timeout, no máximo SEARCH_CAP_MS (a jogada toda fica abaixo de MOVE_MAX_MS). */
     static double searchBudgetMs(GameState state, double timeoutMs) {
         if (searchMsOverride >= 0) return searchMsOverride;
         return Math.max(25.0, Math.min(SEARCH_CAP_MS, timeoutMs * SEARCH_TIME));
@@ -1037,7 +1038,10 @@ public class Logic {
     static final class Search {
 
         static final int WIN = 100000;
-        static final double DRAW = 0.0;
+        // EMPATE (as duas morrem no mesmo turno) vale quase como derrota: só é melhor que perder.
+        // v6.1 usava 0, e aí, quando a nota da posição era negativa, a busca PREFERIA forçar um
+        // choque de cabeça com uma rival do mesmo tamanho. Resultado: muitos empates.
+        static final double DRAW = -WIN / 2.0;
 
         // Pesos da avaliação da busca (1 ponto = 1 casa de território de vantagem).
         // Por segmento a mais que a rival: ser maior ganha os choques de cabeça e o território.
@@ -1097,7 +1101,7 @@ public class Logic {
         // espaço de trabalho reaproveitado (a busca é de uma thread só)
         private final int[] cellt, seen;
         private final boolean[] foodFlag;
-        private final int[] fr0, fr1, nx0, nx1;
+        private final int[] fr0, nx0;
         private int seenGen;
 
         // BITBOARDS: o tabuleiro como bits (bit c = casa c), em L palavras de 64 bits.
@@ -1135,9 +1139,7 @@ public class Logic {
             seen = new int[V];
             foodFlag = new boolean[V];
             fr0 = new int[V];
-            fr1 = new int[V];
             nx0 = new int[V];
-            nx1 = new int[V];
 
             L = (V + 63) >>> 6;
             int rem = V & 63;
@@ -1548,7 +1550,7 @@ public class Logic {
         private double child(St s, int m0, int m1, int depth, double alpha, double beta, int ply) {
             step(s, m0, m1);
             St ns = stepSt;
-            if (stepDead0) return stepDead1 ? DRAW : -(WIN - ply);   // os dois morrem = empate
+            if (stepDead0) return stepDead1 ? DRAW + ply : -(WIN - ply);   // os dois morrem = empate
             if (stepDead1) return WIN - ply;                         // quanto mais cedo a vitória, melhor
             return ab(ns, depth - 1, alpha, beta, ply + 1);
         }
