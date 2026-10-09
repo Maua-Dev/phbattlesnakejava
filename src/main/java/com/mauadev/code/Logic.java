@@ -43,6 +43,8 @@ package com.mauadev.code;
 //
 //  TÉCNICAS (resumo)
 //   - Minimax com poda alfa-beta, aprofundamento iterativo e ordenação pelas notas clássicas.
+//   - Busca incompleta aproveitada: se o tempo acaba no meio de uma profundidade e um lance já
+//     terminado provou ser melhor que o favorito nessa conta mais funda, ele é o escolhido.
 //   - Ordenação "killer": em cada nível da árvore, o lance que foi melhor da última vez é testado
 //     primeiro. Não muda a resposta, mas a poda corta muito mais cedo (quase metade dos nós).
 //   - Avaliação com BITBOARDS: o território (Voronoi) é calculado com operações de bits, várias
@@ -170,7 +172,7 @@ public class Logic {
         info.put("color", "#00E5FF");    // ciano neon
         info.put("head", "fang");        // cabeça grátis (Standard)
         info.put("tail", "sharp");       // cauda grátis (Standard)
-        info.put("version", "6.2.0-java");
+        info.put("version", "6.3.0-java");
         return info;
     }
 
@@ -1621,6 +1623,7 @@ public class Logic {
                 int[] mv = new int[n];
                 double[] val = new double[n];
                 double alpha = -10.0 * WIN;
+                int done = 0;   // lances da raiz já calculados por inteiro nesta profundidade
                 try {
                     for (int k = 0; k < n; k++) {
                         int m0 = order[k];
@@ -1633,9 +1636,23 @@ public class Logic {
                         }
                         mv[k] = m0;
                         val[k] = worst;
+                        done = k + 1;
                         if (worst > alpha) alpha = worst;
                     }
                 } catch (Timeout e) {
+                    // O tempo acabou no meio desta profundidade. O 1º lance (o melhor da anterior) já foi
+                    // recalculado mais fundo; se outro lance terminado provou ser MELHOR que ele aqui,
+                    // a conta mais funda vale mais que a antiga: usa o resultado parcial.
+                    if (done >= 2) {
+                        double bestNew = Double.NEGATIVE_INFINITY;
+                        for (int k = 1; k < done; k++) bestNew = Math.max(bestNew, val[k]);
+                        if (bestNew > val[0]) {
+                            resMoves = Arrays.copyOf(mv, done);
+                            resVals = Arrays.copyOf(val, done);
+                            resCount = done;
+                            maxDepth = depth;
+                        }
+                    }
                     break;
                 }
                 resMoves = mv;
